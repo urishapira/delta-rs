@@ -343,7 +343,8 @@ impl DeltaTable {
             Ok(checkpoint) => {
                 let mut returned_actions: Vec<Action> = Vec::new();
                 if checkpoint.version > version {
-                    let version_timestamp = self.get_version_timestamp(version).await?;
+                    // Couldn't get version - it means we need all transactions
+                    let version_timestamp = self.get_version_timestamp(version).await.unwrap_or(0);
                     let acts = self.get_checkpoint_actions_since_version(&checkpoint, version_timestamp).await?;
                     returned_actions.extend(acts);
                 }
