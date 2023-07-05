@@ -334,6 +334,96 @@ impl DeltaTable {
         }
     }
 
+        /// doc
+    pub async fn get_all_actions_since_version(
+        &mut self,
+        version: i64
+    ) -> Result<Vec<Action>, DeltaTableError> {
+        return match get_last_checkpoint(&self.storage).await {
+            Ok(checkpoint) => {
+                let mut returned_actions: Vec<Action> = Vec::new();
+                if checkpoint.version > version {
+                    let version_timestamp = self.get_version_timestamp(version).await?;
+                    let acts = self.get_checkpoint_actions_since_version(&checkpoint, version_timestamp).await?;
+                    returned_actions.extend(acts);
+                }
+
+                Ok(returned_actions)
+            },
+            Err(_) => Err(DeltaTableError::Generic(String::from("bla")))
+        }
+    }
+
+    async fn get_checkpoint_actions_since_version(
+        &self,
+        check_point: &CheckPoint,
+        version_timestamp: i64
+    ) -> Result<Vec<Action>, DeltaTableError> {
+        let checkpoint_data_paths = self.get_checkpoint_data_paths(check_point);
+        let mut checkpoint_actions_since_version: Vec<Action> = Vec::new();
+        for f in &checkpoint_data_paths {
+            let data = self.storage.get(f).await?.bytes().await?;
+            let actions = Self::get_actions_from_checkpoint_bytes(data)?;
+            for action in actions {
+                match &action {
+                    Action::add(add_action) => {
+                        if add_action.modification_time > version_timestamp {
+                            checkpoint_actions_since_version.push(action);
+                        }
+                    },
+                    Action::remove(remove_action) => {
+                        if let Some(timestamp) = remove_action.deletion_timestamp {
+                            if timestamp > version_timestamp {
+                                checkpoint_actions_since_version.push(action);
+                            }
+                            
+                        }
+                    },
+                    _ => ()
+                }
+            }
+        }
+
+        Ok(checkpoint_actions_since_version)
+    }
+
+    fn get_actions_from_checkpoint_bytes(data: bytes::Bytes) -> Result<Vec<Action>, DeltaTableError> {
+        #[cfg(feature = "parquet")]
+        {
+            use parquet::file::reader::{FileReader, SerializedFileReader};
+            let mut checkpoint_actions = Vec::new();
+            let preader = SerializedFileReader::new(data)?;
+            let schema = preader.metadata().file_metadata().schema();
+            if !schema.is_group() {
+                return Err(DeltaTableError::Generic(String::from("bad things")));
+            }
+            for record in preader.get_row_iter(None)? {
+                checkpoint_actions.push(action::Action::from_parquet_record(schema, &record)?);
+            }
+
+            Ok(checkpoint_actions)
+        }
+
+        #[cfg(feature = "parquet2")]
+        {
+            use crate::action::parquet2_read::actions_from_row_group;
+            use parquet2::read::read_metadata;
+            let mut checkpoint_actions = Vec::new();
+            let mut reader = std::io::Cursor::new(data);
+            let metadata = read_metadata(&mut reader)?;
+
+            for row_group in metadata.row_groups {
+                for action in actions_from_row_group(row_group, &mut reader)
+                    .map_err(action::ActionError::from)?
+                {
+                    checkpoint_actions.push(action);
+                }
+            }
+
+            Ok((checkpoint_actions))
+        }
+    }
+
     /// Create a new [`DeltaTable`] from a [`DeltaTableState`] without loading any
     /// data from backing storage.
     ///
