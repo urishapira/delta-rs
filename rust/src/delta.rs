@@ -334,41 +334,45 @@ impl DeltaTable {
         }
     }
 
-        /// doc
+    /// doc
     pub async fn get_all_actions_since_version(
         &mut self,
-        mut version: i64
+        mut version: i64,
     ) -> Result<Vec<Action>, DeltaTableError> {
-        return match get_last_checkpoint(&self.storage).await {
+        let mut returned_actions: Vec<Action> = Vec::new();
+        match get_last_checkpoint(&self.storage).await {
             Ok(checkpoint) => {
-                let mut returned_actions: Vec<Action> = Vec::new();
                 if checkpoint.version > version {
                     // If we can't find the version timestamp - means we need all transactions
                     let timestamp_result = self.get_version_timestamp(version).await;
                     let version_timestamp = match timestamp_result {
                         Ok(timestamp) => timestamp,
-                        Err(_) => 0
+                        Err(_) => 0,
                     };
-                    let acts = self.get_checkpoint_actions_since_version(&checkpoint, version_timestamp).await?;
+                    let acts = self
+                        .get_checkpoint_actions_since_version(&checkpoint, version_timestamp)
+                        .await?;
                     returned_actions.extend(acts);
                     version = checkpoint.version;
                 }
+            }
+            // No checkpoint found - actions will be taken from the transactions
+            Err(ProtocolError::CheckpointNotFound) => (),
+            Err(_) => return Err(DeltaTableError::Generic(String::from("bla"))),
+        };
 
-                while let PeekCommit::New(next_version, actions) = self.peek_next_commit(version).await? {
-                    returned_actions.extend(actions);
-                    version = next_version;
-                }
-
-                Ok(returned_actions)
-            },
-            Err(_) => Err(DeltaTableError::Generic(String::from("bla")))
+        while let PeekCommit::New(next_version, actions) = self.peek_next_commit(version).await? {
+            returned_actions.extend(actions);
+            version = next_version;
         }
+
+        Ok(returned_actions)
     }
 
     async fn get_checkpoint_actions_since_version(
         &self,
         check_point: &CheckPoint,
-        version_timestamp: i64
+        version_timestamp: i64,
     ) -> Result<Vec<Action>, DeltaTableError> {
         let checkpoint_data_paths = self.get_checkpoint_data_paths(check_point);
         let mut checkpoint_actions_since_version: Vec<Action> = Vec::new();
@@ -381,16 +385,15 @@ impl DeltaTable {
                         if add_action.modification_time > version_timestamp {
                             checkpoint_actions_since_version.push(action);
                         }
-                    },
+                    }
                     Action::remove(remove_action) => {
                         if let Some(timestamp) = remove_action.deletion_timestamp {
                             if timestamp > version_timestamp {
                                 checkpoint_actions_since_version.push(action);
                             }
-                            
                         }
-                    },
-                    _ => ()
+                    }
+                    _ => (),
                 }
             }
         }
@@ -398,7 +401,9 @@ impl DeltaTable {
         Ok(checkpoint_actions_since_version)
     }
 
-    fn get_actions_from_checkpoint_bytes(data: bytes::Bytes) -> Result<Vec<Action>, DeltaTableError> {
+    fn get_actions_from_checkpoint_bytes(
+        data: bytes::Bytes,
+    ) -> Result<Vec<Action>, DeltaTableError> {
         #[cfg(feature = "parquet")]
         {
             use parquet::file::reader::{FileReader, SerializedFileReader};
