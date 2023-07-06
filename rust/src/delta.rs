@@ -392,7 +392,7 @@ impl DeltaTable {
                                 checkpoint_actions_since_version.push(action);
                             }
                         }
-                    },
+                    }
                     Action::metaData(metadata_action) => {
                         if let Some(metadata_timestamp) = metadata_action.created_time {
                             if metadata_timestamp > version_timestamp {
