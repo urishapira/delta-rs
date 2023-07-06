@@ -351,6 +351,7 @@ impl DeltaTable {
                     };
                     let acts = self.get_checkpoint_actions_since_version(&checkpoint, version_timestamp).await?;
                     returned_actions.extend(acts);
+                    version = checkpoint.version;
                 }
 
                 while let PeekCommit::New(next_version, actions) = self.peek_next_commit(version).await? {
