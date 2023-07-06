@@ -337,7 +337,7 @@ impl DeltaTable {
         /// doc
     pub async fn get_all_actions_since_version(
         &mut self,
-        version: i64
+        mut version: i64
     ) -> Result<Vec<Action>, DeltaTableError> {
         return match get_last_checkpoint(&self.storage).await {
             Ok(checkpoint) => {
@@ -351,6 +351,11 @@ impl DeltaTable {
                     };
                     let acts = self.get_checkpoint_actions_since_version(&checkpoint, version_timestamp).await?;
                     returned_actions.extend(acts);
+                }
+
+                while let PeekCommit::New(next_version, actions) = self.peek_next_commit(version).await? {
+                    returned_actions.extend(actions);
+                    version = next_version;
                 }
 
                 Ok(returned_actions)
